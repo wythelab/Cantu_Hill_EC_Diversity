@@ -1,0 +1,106 @@
+#Import Packages
+library("DESeq2")
+library("tximport")
+library("AnnotationDbi")
+library("GenomicFeatures")
+library("pheatmap")
+library("EnhancedVolcano")
+library("RColorBrewer")
+library("limma")
+
+##To import results from Salmon
+txdb <-makeTxDbFromGFF("Mus_musculus.GRCm38.100.chr.gtf")
+k <- keys(txdb, keytype = "GENEID")
+df <- select(txdb, keys = k,  columns = "TXNAME", keytype = "GENEID")
+tx2gene <- df[, 2:1]
+head(tx2gene)
+
+#Example of processing one organ
+samples <- read.table("EC_HET_RNA/data/Brain_Retina_Samples.txt", header = TRUE)
+samples <- as.data.frame(samples)
+samples
+
+files <- file.path(samples$File, "quant.sf")
+files
+names(files) <- paste0(samples$File)
+all(file.exists(files))
+txi.salmon <- tximport(files, type = "salmon", tx2gene = tx2gene, ignoreTxVersion = TRUE)
+head(txi.salmon$counts)
+
+ddsTxi <- DESeqDataSetFromTximport(txi.salmon,
+                                   colData = samples,
+                                   design = ~ Condition)
+keep <- rowSums(counts(ddsTxi)) >= 10
+ddsTxi <- ddsTxi[keep,]
+ddsTxi <- DESeq(ddsTxi)
+resultsNames(ddsTxi) # lists the coefficients
+results(ddsTxi)
+
+
+AvB<- results(ddsTxi, contrast=c("Condition", "A", "B"),alpha = 0.1)
+summary(AvB)
+
+#FOR VOLCANO
+res1v2 <- AvB
+FC <- 0.5
+p <- 0.1
+keyvals <- rep('grey75', nrow(res1v2))
+names(keyvals) <- rep('NS', nrow(res1v2))
+keyvals[which(abs(res1v2$log2FoldChange) > FC & res1v2$padj > p)] <- 'grey50'
+names(keyvals)[which(abs(res1v2$log2FoldChange) > FC & res1v2$padj > p)] <- 'log2FoldChange'
+keyvals[which(abs(res1v2$log2FoldChange) < FC & res1v2$padj < p)] <- 'grey25'
+names(keyvals)[which(abs(res1v2$log2FoldChange)  < FC & res1v2$padj < p)] <- 'padj'
+keyvals[which(res1v2$log2FoldChange < -FC & res1v2$padj < p)] <- 'blue3'
+names(keyvals)[which(res1v2$log2FoldChange  < -FC & res1v2$padj < p)] <- 'Signif. down-regulated'
+keyvals[which(res1v2$log2FoldChange > FC & res1v2$padj < p)] <- 'red3'
+names(keyvals)[which(res1v2$log2FoldChange > FC & res1v2$padj < p)] <- 'Signif. up-regulated'
+unique(keyvals)
+unique(names(keyvals))
+#plotCounts(ddsTxi, gene="ENSMUSG00000020717", intgroup="Condition")
+lab_italics <- paste0("italic('", rownames(res1v2), "')")
+selectLab_italics = paste0(
+  "italic('",c('ENSMUSG00000020717'),
+  "')")
+
+
+volcano <- EnhancedVolcano(res1v2,
+                           lab = lab_italics,
+                           x = 'log2FoldChange',
+                           y = 'padj',
+                           selectLab = selectLab_italics,
+                           xlim = c(-8,8),
+                           ylim = c(0,13),
+                           xlab = bquote(~Log[2]~ 'fold change'),
+                           ylab = bquote(~-Log[10] ~ italic(adjP)),
+                           title = 'Volcano Plot Brain and Retina over Input',
+                           pCutoff = 0.1,
+                           FCcutoff = 0.5,
+                           pointSize = 1,
+                           labSize = 2,
+                           #shape = c(6, 4, 2, 11, 15),
+                           colCustom = keyvals,
+                           colAlpha = 0.75,
+                           legendPosition = 'right',
+                           legendLabSize = 10,
+                           legendIconSize = 10,
+                           drawConnectors = FALSE,
+                           widthConnectors = 0.5,
+                           colConnectors = 'grey50',
+                           gridlines.major = TRUE,
+                           gridlines.minor = FALSE,border = 'full',
+                           borderWidth = 1,
+                           borderColour = 'black',boxedLabels=TRUE,titleLabSize = 10,
+                           subtitleLabSize = 0,
+                           captionLabSize = 10,axisLabSize = 10)
+volcano 
+#ggsave(filename = 'rplot.pdf', plot = volcano,
+#       path = './EC_HET_RNA/Results/',
+#       width = 11, height = 8, units = "in")
+
+resOrdered <- res1v2[order(res1v2$padj),]
+head(resOrdered)
+resOrdered
+resSig <- subset(resOrdered, padj < 0.1)
+resSigUp <- subset(resSig, log2FoldChange > 0.5)
+resSigUp
+write.csv(as.data.frame(resSigUp), file="EC_HET_RNA/Results/Figure4_RNA/Brain_Retina_ECUp.csv")
