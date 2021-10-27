@@ -1,0 +1,36 @@
+#Differential Expression
+
+# Load libraries ----------------------------------------------------------
+library(tidyverse)
+library(Seurat)
+library(patchwork)
+library(openxlsx)
+
+# Load data ---------------------------------------------------------------
+load(file = "./data/endo/SeuratObjects/./data/endo/SeuratObjects/ecall_seurat_integrated.RData")
+sall_seurat_integrated_DE <- sall_seurat_integrated
+rm(sall_seurat_integrated)
+gc()
+
+DefaultAssay(sall_seurat_integrated_DE) <- "RNA" 
+sall_seurat_integrated_DE@active.assay
+
+# Re-running SCTransform on Integrated data -------------------------------
+library(sctransform)
+sall_seurat_integrated_DE.sct <- SCTransform(sall_seurat_integrated_DE, vars.to.regress = "percent.mt", verbose = TRUE)
+rm(sall_seurat_integrated_DE)
+
+#Picking a resolution and finding cluster markers
+chosen.resolution.DE <- 0.6 # Using 0.6 as active resolution
+Idents(object = sall_seurat_integrated_DE.sct) <- paste0("integrated_snn_res.", chosen.resolution.DE) #"integrated_snn_res.0.6"
+
+nlevels(sall_seurat_integrated_DE.sct)
+sall_seurat_integrated_DE.sct_allMarkers_r0.6 <- FindAllMarkers(sall_seurat_integrated_DE.sct, 
+                                                         only.pos = FALSE, 
+                                                         min.pct = 0.1, 
+                                                         logfc.threshold = 0.25,
+                                                         return.thresh = 0.01,
+                                                         test.use = "wilcox",
+                                                         verbose = TRUE) 
+                                                         
+#Rename clusters and export. 
