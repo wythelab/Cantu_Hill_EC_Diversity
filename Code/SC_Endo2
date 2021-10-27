@@ -1,0 +1,52 @@
+#Creating a combined Seurat object, following Seurats workflow of integration.
+#Import Packages
+library(Seurat)
+library(patchwork)
+library(tidyverse)
+library(rstatix)
+
+#Import each experiment
+s1_Endo9 <- s1_seurat_sct_final_with.celltypes
+
+## Create list of all Seurat objects
+seurat_list <- list(s1_Endo9, 
+                    s2_Endo12, 
+                    s3_Endo16, 
+                    s4_EndoP8,
+                    s5_EndoAd)
+
+seurat_features <- SelectIntegrationFeatures(object.list = seurat_list, nfeatures = 3000)
+seurat_list <- PrepSCTIntegration(object.list = seurat_list, anchor.features = seurat_features, 
+                                  verbose = TRUE)
+
+# Next, identify anchors and integrate the datasets. 
+seurat_anchors <- FindIntegrationAnchors(object.list = seurat_list, normalization.method = "SCT", 
+                                         anchor.features = seurat_features, verbose = TRUE)
+sall_seurat_integrated <- IntegrateData(anchorset = seurat_anchors, normalization.method = "SCT", 
+                                         verbose = TRUE)
+
+glimpse(sall_seurat_integrated@meta.data)
+table(sall_seurat_integrated@meta.data$sample)
+dim(sall_seurat_integrated)
+
+
+rm(seurat_anchors,
+   seurat_features,
+   seurat_list)
+
+gc()
+
+# Downstream analysis on integrated dataset -----------------------------------------------------
+## Commands are identical to the standard workflow, 
+sall_seurat_integrated <- RunPCA(object = sall_seurat_integrated, verbose = FALSE)
+sall_seurat_integrated <- RunUMAP(object = sall_seurat_integrated, dims = 1:30)
+
+sall_seurat_integrated <- FindNeighbors(sall_seurat_integrated, reduction = "pca", dims = 1:30, verbose = TRUE)
+sall_seurat_integrated <- FindClusters(sall_seurat_integrated, resolution = seq(from = 0.4, to = 1.2, by = 0.1), reduction = "pca", verbose = TRUE, save.SNN = TRUE)
+
+save(sall_seurat_integrated, 
+     file = './data/endo/SeuratObjects/ecall_seurat_integrated.RData')
+     
+# Clean-up ----------------------------------------------------------------
+rm(list = ls())
+gc()
