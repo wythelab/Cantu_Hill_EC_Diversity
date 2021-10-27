@@ -1,0 +1,78 @@
+# Load libraries ----------------------------------------------------------
+library(monocle)
+
+#Endothelial Clusters were subset and object sall_seurat_integrated_DE_OnlyEndo was created.
+
+data <- as(as.matrix(sall_seurat_integrated_DE_OnlyEndo.sct@assays$RNA@data), 'sparseMatrix')
+pd <- sall_seurat_integrated_DE_OnlyEndo.sct@meta.data
+pd <- new('AnnotatedDataFrame', data = sall_seurat_integrated_DE_OnlyEndo.sct@meta.data)
+dim(pd)
+fData <- data.frame(gene_short_name = row.names(data), row.names = row.names(data))
+fData
+fd <- new('AnnotatedDataFrame', data = fData)
+dim(pd)
+dim(sall_seurat_integrated_DE_OnlyEndo.sct)
+
+my_cds <- newCellDataSet(data, phenoData = pd, featureData = fd)
+dim(my_cds)
+my_cds <- estimateSizeFactors(my_cds)
+my_cds <- estimateDispersions(my_cds)
+my_cds <- detectGenes(my_cds, min_expr = 0.1)
+x <- pData(my_cds)$num_genes_expressed
+x_1 <- (x - mean(x)) / sd(x)
+summary(x_1)
+df <- data.frame(x = x_1)
+ggplot(df, aes(x)) +
+  geom_histogram(bins = 50) +
+  geom_vline(xintercept = c(-2, 2), linetype = "dotted", color = 'red')
+pData(my_cds)$UMI <- Matrix::colSums(exprs(my_cds))
+ggplot(pData(my_cds), aes(num_genes_expressed, UMI)) + geom_point()
+disp_table <- dispersionTable(my_cds)
+table(disp_table$mean_expression>=0.1)
+unsup_clustering_genes <- subset(disp_table, mean_expression >= 0.1)
+my_cds <- setOrderingFilter(my_cds, unsup_clustering_genes$gene_id)
+plot_ordering_genes(my_cds)
+plot_pc_variance_explained(my_cds)
+my_cds <- reduceDimension(my_cds, max_components = 2, num_dim = 10,
+                          reduction_method = 'tSNE', verbose = TRUE, check_duplicates = FALSE, cores = 8)
+my_cds <- clusterCells(my_cds, num_clusters = 5)
+
+##Check for differential expression genes by timepoint. 
+#by timepoint
+clustering_DEG_genes <- differentialGeneTest(my_cds,
+                                             fullModelFormulaStr = '~samplename',
+                                             cores = 8)
+my_ordering_genes <- row.names(clustering_DEG_genes)[order(clustering_DEG_genes$qval)][1:1000]
+my_cds_subset <- setOrderingFilter(my_cds, ordering_genes = my_ordering_genes)
+my_cds_subset <- reduceDimension(my_cds_subset, method = 'DDRTree')
+saveRDS(my_cds_subset, file = "my_cds_subset.RDS")
+
+my_cds_subset <- orderCells(my_cds_subset)
+cell_type_color <- c("Endo12"="#A1A537", 
+                             "Endo16"="#2EB77B", 
+                             "Endo9"="#F3756D", 
+                             "EndoAd"="#BD77B2", 
+                             "EndoP8"="#37ACE2")
+                               
+plot_cell_trajectory(my_cds_subset, color_by = "State")
+
+
+###Finding genes differentially expressed by pseudotime to explore.
+diff_test_res <- differentialGeneTest(my_cds_subset,
+                                      fullModelFormulaStr = "~sm.ns(Pseudotime)")
+
+#To export heatmaps of selected genes.
+#Mitotic Markers
+marker_genes <- row.names(subset(fData(my_cds_subset), 
+                                 gene_short_name %in%c("Ube2c","Kif20a","Birc5","Hmmr","Fam64a","Aurkb","Mxd3","Diaph3","Shcbp1","Cdca5",
+                                                       "Kif20b","Cep55","Nuf2","Bub1","Fam83d","Depdc1a","Plk1","Kif23","Kif4","Ska1","Anln",
+                                                       "Dlgap5","Bub1b","Cenpe","Kifc1")))
+marker_genes <- differentialGeneTest(my_cds_subset[marker_genes,],
+                                     fullModelFormulaStr = "~sm.ns(Pseudotime)")
+marker_genes
+sig_gene_names <- row.names(subset(marker_genes, qval < 0.1))
+sig_gene_names
+plot1 <- plot_pseudotime_heatmap(my_cds_subset[sig_gene_names,],
+                                 num_clusters = 1,
+                                 cores = 8,
+                                 show_rownames = T, return_heatmap = T)
