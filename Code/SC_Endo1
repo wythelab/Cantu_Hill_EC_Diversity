@@ -1,6 +1,7 @@
+#Script below was adapted from the recommended processing pipeline the library creators have shared. 
 ##Import and processing of each timepoint----------------
 
-projectDir <- "/media/wythelab/ExtraDrive3/Single_Cell_Heterogeneity/Krithika_SC/PND21_Single_Cell_data/"
+projectDir <- "/media/wythelab/ExtraDrive3/Single_Cell_Heterogeneity/"
 
 library(Seurat)
 library(patchwork)
