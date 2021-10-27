@@ -1,5 +1,6 @@
 #Data used here was taken after mapping, peakcalling and sorting. Import files include bam and peaks files for each sample.
 #See materials and methods for more details on how these files were generated.
+#Script below was adapted from the recommended processing pipeline the library creators have shared. 
 
 #Load Libraries-------
 library(DiffBind)
