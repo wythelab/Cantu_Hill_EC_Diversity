@@ -1,0 +1,78 @@
+
+# Load libraries ----------------------------------------------------------
+library(Seurat)
+library(ggplot2)
+
+#Installation for SCENIC
+#install loomR from GitHub using the remotes package 
+remotes::install_github(repo ='mojaveazure/loomR', ref = 'develop')
+
+if (!requireNamespace("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+BiocManager::version()
+# If your bioconductor version is previous to 4.0, see the section bellow
+
+## Required
+BiocManager::install(c("AUCell", "RcisTarget"))
+BiocManager::install(c("GRNBoost")) # Optional. Can be replaced by GRNBoost
+
+## Optional (but highly recommended):
+# To score the network on cells (i.e. run AUCell):
+BiocManager::install(c("rbokeh"))
+# For various visualizations and perform t-SNEs:
+BiocManager::install(c("DT", "NMF", "ComplexHeatmap", "R2HTML", "Rtsne"))
+# To support paralell execution (not available in Windows):
+BiocManager::install(c("doMC", "doRNG"))
+# To export/visualize in http://scope.aertslab.org
+if (!requireNamespace("devtools", quietly = TRUE)) install.packages("devtools")
+devtools::install_github("aertslab/SCopeLoomR", build_vignettes = TRUE)
+
+devtools::install_github("aertslab/SCENIC") 
+
+##A loom was created with the endothelial cell clusters of each timepoint and saved as "loom" file.
+loom <- open_loom(loom) # We recommend to open files as read-only (mode="r"). However, since this is an old-format loom file, it needs write access to update it.
+exprMat <- get_dgem(loom)
+cellInfo <- get_cell_annotation(loom)
+close_loom(loom)
+
+### Initialize settings
+library(SCENIC)
+mm10_dbs <- list('500bp'= 'mm10__refseq-r80__500bp_up_and_100bp_down_tss.mc9nr.feather', '10kb' = 'mm10__refseq-r80__10kb_up_and_down_tss.mc9nr.feather')
+db_mcVersion <- 'v9'
+scenicOptions <- initializeScenic(org='mgi',
+                                  dbs = mm10_dbs,
+                                  nCores=10)
+                                  
+## Co-expression network
+genesKept <- geneFiltering(exprMat, scenicOptions)
+exprMat_filtered <- exprMat[genesKept, ]
+exprMat_filtered <- log2(exprMat_filtered+1) 
+exportsForArboreto(exprMat_filtered, scenicOptions, dir = "int")
+runCorrelation(exprMat_filtered, scenicOptions)
+
+##Arboreto was run and resulting table imported back to R
+GRNBoost_linkList <- importArboreto("int/net1_grn_output.tsv", normalizeImportance = T)
+saveRDS(GRNBoost_linkList, file = "int/1.4_GENIE3_linkList.Rds")
+### Build and score the GRN
+runSCENIC_1_coexNetwork2modules(scenicOptions)
+runSCENIC_2_createRegulons(scenicOptions) 
+#Next function was only completed when only 1 core was used.
+scenicOptions@settings$nCores <- 1
+runSCENIC_3_scoreCells <- edit(runSCENIC_3_scoreCells)
+##modify line to this in order to avoid early script error. trhAssignment <- as.list(signif(unlist(trhAssignment), 3))
+runSCENIC_3_scoreCells(scenicOptions, exprMat_filtered)
+
+# Optional: Binarize activity
+library(shiny); library(rbokeh)
+aucellApp <- plotTsne_AUCellApp(scenicOptions, exprMat=exprMat_filtered)
+savedSelections <- shiny::runApp(aucellApp)
+newThresholds <- savedSelections$thresholds
+scenicOptions@fileNames$int["aucell_thresholds",1] <- "int/newThresholds.Rds"
+saveRDS(newThresholds, file=getIntName(scenicOptions, "aucell_thresholds"))
+scenicOptions <- runSCENIC_4_aucell_binarize(scenicOptions)
+
+### Exploring output 
+# output/Step2_regulonTargetsInfo.tsv in detail, used to look at regulon targets for pseudotime representation: 
+regulonTargetsInfo <- loadInt(scenicOptionse12, "regulonTargetsInfo")
+tableSubset <- regulonTargetsInfo[TF=="Lef1"]
+viewMotifs(tableSubset) 
+
