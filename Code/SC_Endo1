@@ -1,0 +1,200 @@
+Import and processing of each timepoint
+
+projectDir <- "/media/wythelab/ExtraDrive3/Single_Cell_Heterogeneity/Krithika_SC/PND21_Single_Cell_data/"
+
+library(Seurat)
+library(patchwork)
+library(tidyverse)
+library(rstatix)
+
+# Sample 1 : Endothelial Enriched Cells Embryonic Day 9.5
+s1_dir <- file.path("/media/wythelab/ExtraDrive1/E95EC2/outs/filtered_feature_bc_matrix/")
+s1_data <- Read10X(data.dir = s1_dir)
+s1_seurat <- CreateSeuratObject(counts = s1_data, project = "Endo9") # 
+s1_seurat_preproc <- s1_seurat
+# Adding 'number of genes detected per UMI' -------------------------------
+s1_seurat_preproc$log10GenesPerUMI <- log10(s1_seurat_preproc$nFeature_RNA) / log10(s1_seurat_preproc$nCount_RNA)
+
+## The percentage of reads that map to the mitochondrial genome. 
+s1_seurat_preproc[["percent.mt"]] <- PercentageFeatureSet(s1_seurat_preproc, pattern = "^mt-") 
+
+s1_seurat_preproc$nGene <- s1_seurat_preproc@meta.data$nFeature_RNA
+s1_seurat_preproc$nUMI <- s1_seurat_preproc@meta.data$nCount_RNA
+s1_seurat_preproc$sample <- s1_seurat_preproc@meta.data$orig.ident
+s1_metadata <- s1_seurat_preproc@meta.data
+
+# Add cell IDs to metadata
+s1_metadata$cells <- rownames(s1_metadata)
+
+# Summary statistics on features (genes), counts (UMI) -----------------------------------
+outlier_threshold_nGene <- s1_metadata %>% 
+  get_summary_stats(nGene, type = "full") %>% 
+  mutate(outlier_threshold_nGene = (q3 + iqr*1.5)) %>% 
+  pull(outlier_threshold_nGene) %>% unname()
+
+outlier_threshold_nUMI <- s1_metadata %>% 
+  get_summary_stats(nUMI, type = "full") %>% 
+  mutate(outlier_threshold_nUMI = (q3 + iqr*1.5)) %>% 
+  pull(outlier_threshold_nUMI) %>% unname()
+
+# Filter out low quality reads using selected thresholds - these will change with experiment
+s1_seurat_post_InitFiltering <- subset(x = s1_seurat_preproc, 
+                                       subset= (nUMI >= 500) & 
+                                         (nUMI <= outlier_threshold_nUMI) &
+                                         (nGene >= 250) & 
+                                         (nGene <= outlier_threshold_nGene) &
+                                         (log10GenesPerUMI > 0.80) & 
+                                         (mitoRatio < 0.1)
+                                         
+# Gene-level filtering
+s1_seurat_post_GeneFiltering <- s1_seurat_post_InitFiltering
+counts <- GetAssayData(object = s1_seurat_post_GeneFiltering, slot = "counts")
+nonzero <- counts > 0
+keep_genes <- Matrix::rowSums(nonzero) >= 10
+filtered_counts <- counts[keep_genes, ]
+
+# Reassign to filtered Seurat object
+s1_seurat_post_GeneFiltering <- CreateSeuratObject(filtered_counts, meta.data = s1_seurat_post_GeneFiltering@meta.data)
+
+dim(s1_seurat)
+dim(s1_seurat_preproc)
+dim(s1_seurat_post_InitFiltering) 
+dim(s1_seurat_post_GeneFiltering)
+
+# SCTransform -----------------------------------------------
+
+library(sctransform)
+
+s1_seurat_sct_proc <- s1_seurat_post_GeneFiltering
+
+s1_seurat_sct_proc <- SCTransform(s1_seurat_sct_proc, vars.to.regress = "percent.mt", verbose = TRUE)
+
+s1_seurat_sct_proc <- RunPCA(s1_seurat_sct_proc, verbose = TRUE)
+s1_seurat_sct_proc <- RunUMAP(s1_seurat_sct_proc, dims = 1:30, verbose = TRUE)
+s1_seurat_sct_proc <- RunTSNE(s1_seurat_sct_proc, dims.use = 1:30, verbose = TRUE)
+
+s1_seurat_sct_proc <- FindNeighbors(s1_seurat_sct_proc, dims = 1:30, reduction = "pca", verbose = TRUE)
+
+s1_seurat_sct_proc <- FindClusters(s1_seurat_sct_proc, 
+                                   reduction = "pca", 
+                                   resolution = seq(from = 0.4, to = 1.2, by = 0.1), 
+                                   verbose = TRUE, 
+                                   save.SNN = TRUE) 
+
+glimpse(s1_seurat_sct_proc@meta.data)
+
+# Pick active resolution
+Idents(object = s1_seurat_sct_proc) <- "SCT_snn_res.0.8"
+nlevels(s1_seurat_sct_proc)
+
+DimPlot(s1_seurat_sct_proc, reduction = "pca", label = TRUE) #uses active resolution
+DimPlot(s1_seurat_sct_proc, reduction = "umap", label = TRUE) 
+DimPlot(s1_seurat_sct_proc, reduction = "tsne", label = TRUE) 
+ElbowPlot(s1_seurat_sct_proc) # chosen.resolution = 0.8
+
+# DoubletFinder -----------------------------------------------------------
+
+
+# remotes::install_github('chris-mcginnis-ucsf/DoubletFinder')
+
+library(DoubletFinder)
+library(ggplot2)
+library(dplyr)
+
+s1_seurat_sct_doublet_proc <- s1_seurat_sct_proc
+sweep.res.list_s1_sct <- paramSweep_v3(s1_seurat_sct_doublet_proc, PCs = 1:30, sct = TRUE)
+sweep.stats_s1_sct <- summarizeSweep(sweep.res.list_s1_sct, GT = FALSE)
+bcmvn_s1_sct <- find.pK(sweep.stats_s1_sct)
+
+optimal_pK_s1 <- as.numeric(as.character(bcmvn_s1_sct$pK[which.max(bcmvn_s1_sct$BCmetric)]))
+
+bcmvn_s1_sct %>%
+  ggplot(aes(x = as.numeric(as.character(pK)), y = BCmetric)) +
+  geom_line(color="blue") +
+  geom_point() +
+  xlab(label = "pK") +
+  ggtitle(label = "The BCmvn distributions") +
+  geom_vline(xintercept = optimal_pK_s1, color = "red") +
+  geom_text(x = optimal_pK_s1, aes(y = max(BCmetric)), label = paste0("Optimal pK ", as.character(optimal_pK_s1)), color = "red", hjust = -0.25) +
+  theme_bw() +
+  theme(plot.title = element_text(hjust = 0.5))
+
+
+### Homotypic Doublet Proportion Estimate -------------------------------------------------------------------------------------
+annotations <- s1_seurat_sct_doublet_proc@meta.data$seurat_clusters # chosen.resolution = 0.8
+homotypic.prop <- modelHomotypic(annotations) 
+nExp_poi <- round(0.075*nrow(s1_seurat_sct_doublet_proc@meta.data))
+nExp_poi.adj <- round(nExp_poi*(1-homotypic.prop))
+
+### Run DoubletFinder with varying classification stringencies ----------------------------------------------------------------
+s1_seurat_sct_doublet_proc <- doubletFinder_v3(s1_seurat_sct_doublet_proc, PCs = 1:30, pN = 0.25, pK = optimal_pK_s1, nExp = nExp_poi, reuse.pANN = FALSE, sct = TRUE)
+
+pANN = paste("pANN",0.25,optimal_pK_s1,nExp_poi, sep="_")
+s1_seurat_sct_doublet_proc <- doubletFinder_v3(s1_seurat_sct_doublet_proc, PCs = 1:30, pN = 0.25, pK = optimal_pK_s1, nExp = nExp_poi.adj, 
+                                               reuse.pANN = pANN, 
+                                               sct = TRUE)
+
+s1_seurat_sct_doublet_proc@meta.data %>% 
+  select(starts_with("DF.classifications")) %>%  .[,1] %>% 
+  table()
+
+s1_seurat_sct_doublet_proc@meta.data %>% 
+  select(starts_with("DF.classifications")) %>%  .[,2] %>% 
+  table()
+
+s1_seurat_sct_doublet_proc@meta.data %>% 
+  select(starts_with("DF.classifications")) %>%  
+  names() 
+
+DF_classifier1 <- with(s1_seurat_sct_doublet_proc@meta.data, 
+                       get(paste("DF.classifications", 0.25, optimal_pK_s1, nExp_poi, sep = "_")))
+
+DF_classifier2 <- with(s1_seurat_sct_doublet_proc@meta.data, 
+                       get(paste("DF.classifications", 0.25, optimal_pK_s1, nExp_poi.adj, sep = "_"))) #adjusted for homotypic doublets
+
+
+### Filtering -----------------------
+cells.use <- colnames(s1_seurat_sct_doublet_proc)[DF_classifier2 == "Singlet"]
+s1_seurat_sct_proc_doublet_filtered <- subset(s1_seurat_sct_doublet_proc, cells = cells.use)
+
+dim(s1_seurat)
+dim(s1_seurat_preproc)
+dim(s1_seurat_post_InitFiltering) 
+dim(s1_seurat_post_GeneFiltering)
+dim(s1_seurat_sct_proc)
+dim(s1_seurat_sct_doublet_proc)
+dim(s1_seurat_sct_proc_doublet_filtered)
+
+s1_seurat_sct_final_proc <- s1_seurat_sct_proc_doublet_filtered
+
+## Running PCA, UMAP, tSNE, FindNeighbors & FindClusters on Preprocessed, SCTransformed, doublet-filtered object --------------------------------------------
+s1_seurat_sct_final_proc <- RunPCA(s1_seurat_sct_final_proc, verbose = TRUE)
+s1_seurat_sct_final_proc <- RunUMAP(s1_seurat_sct_final_proc, dims = 1:30, verbose = TRUE)
+s1_seurat_sct_final_proc <- RunTSNE(s1_seurat_sct_final_proc, dims = 1:30, verbose = TRUE)
+
+s1_seurat_sct_final_proc <- FindNeighbors(s1_seurat_sct_final_proc, reduction = "pca", dims = 1:30, verbose = TRUE)
+s1_seurat_sct_final_proc <- FindClusters(s1_seurat_sct_final_proc, 
+                                         reduction = "pca", 
+                                         resolution = seq(from = 0.4, to = 1.2, by = 0.1), 
+                                         verbose = TRUE, 
+                                         save.SNN = TRUE) 
+s1_seurat_sct_final_with.celltypes <- s1_seurat_sct_final_proc
+
+# Save images -------------------------------------------------------------
+
+save(s1_seurat,
+     s1_seurat_preproc,
+     s1_seurat_post_InitFiltering,
+     s1_seurat_post_GeneFiltering,
+     s1_seurat_sct_proc,
+     s1_seurat_sct_doublet_proc,
+     s1_seurat_sct_proc_doublet_filtered,
+     s1_seurat_sct_final_proc,
+     file = "./data/endo/SeuratObjects/MC_Sample1-Endo9_SeuratObjects.RData")
+     
+save(s1_seurat_sct_final_with.celltypes,
+     file = './data/endo/SeuratObjects/MC_Sample1-Endo9_Seurat_Final_Celltypes.RData')
+     
+# Clean-up ----------------------------------------------------------------
+rm(list=ls())
+gc()
