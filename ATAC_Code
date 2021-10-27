@@ -1,0 +1,137 @@
+#Load Libraries-------
+library(DiffBind)
+library(tibble)
+library(tidyverse)
+library(Repitools)
+
+#Complete DiffBind
+#To start, load all samples
+result_tissue <- dba(sampleSheet = "Raw_Data/All_samples.csv", minOverlap = 0.66)
+result_tissue
+dba.plotPCA(result_tissue, attributes = DBA_FACTOR)
+peaks  <- dba.blacklist(result_tissue, cores = 12)
+counts <- dba.count(peaks, bParallel = T)
+counts <- dba.normalize(counts)
+model  <- dba.contrast(counts)
+result <- dba.analyze(model)
+result
+# Save dba object post dba.count -----------------------------------
+
+save(result_tissue,
+     file = './data/ATAC_result_tissue_dba.RData')
+save(peaks, file = "data/peaks_DBA.RData")
+save(counts, file = "data/counts_DBA.RData")
+save(model, file = "data/model_DBA.RData")
+save(result, file = "data/result_DBA.RData")
+
+load(file = "data/result_DBA.RData")
+
+#Example of getting enriched peaks in each organ
+#Brain EC enriched Peaks------
+result_tissue <- result
+result_tissue$contrasts=NULL
+result_tissue <- dba.contrast(result_tissue, group1 = result_tissue$masks$Brain&result_tissue$masks$Endothelial,
+                              group2 = result_tissue$masks$Brain&result_tissue$masks$Input, minMembers = 2)
+result_tissue <- dba.analyze(result_tissue, bParallel = TRUE)
+result_tissue
+result_tissue_con <- dba.report(result_tissue, th = .05, bUsePval=TRUE)
+result_tissue_con
+result_tissue_con <- annoGR2DF(result_tissue_con)
+result_tissue_con
+result_tissue_con <- unite(result_tissue_con, "range", c("chr","start"), sep = "-", remove=TRUE)
+result_tissue_con <- unite(result_tissue_con, "range", c("range","end"), sep = "-", remove=TRUE)
+result_tissue_con <- select(result_tissue_con, -c(2))
+result_tissue_con <- remove_rownames(result_tissue_con)
+result_tissue_con <- column_to_rownames(result_tissue_con, var = "range")
+result_tissue_con <- result_tissue_con %>% filter(Fold > 1)
+head(result_tissue_con)
+dim(result_tissue_con)
+
+write.csv(result_tissue_con, file = "results/Brain_EC_specific_peaks.csv")
+plot(result_tissue, contrast=1)
+
+#Homer was used to find overlapping peaks in each organ. Shared peaks and enriched in each organ was imported back.
+##For Heatmaps of Shared and Enriched Peaks in Figs 2-4 and Supplemental Figures
+library("Repitools")
+library("limma")
+library('tidyr')
+library('pheatmap')
+library("tibble")
+library(ChIPpeakAnno)
+library(DiffBind)
+library(tidyverse)
+
+All_samples_brainEC <- dba(sampleSheet = "Raw_Data/Samples_EConly.csv")
+All_samples_brainEC <- dba(sampleSheet = "Raw_Data/Samples_Brain_EConly.csv")
+result_VENN_Endo_All <- read.table(file = "results/Figure2/Enriched_All_EC.txt")
+result_VENN_Brain_Unique <- read.table(file = "results/Figure2/Brain_Peaks_Unique.txt")
+result_VENN_Heart_Unique <- read.table(file = "results/Figure2/Heart_Peaks_Unique.txt")
+result_VENN_Kidney_Unique <- read.table(file = "results/Figure2/Kidney_Peaks_Unique.txt")
+result_VENN_Lung_Unique <- read.table(file = "results/Figure2/Lung_Peaks_Unique.txt")
+result_VENN_Liver_Unique <- read.table(file = "results/Figure2/Liver_Peaks_Unique.txt")
+result_VENN_Brain_Retina_Unique <- read.table(file = "results/Figure2/Brain_Retina_Peaks_Overlap.txt")
+result_VENN_Brain_AND_BrainRet_Unique <- read.table(file = "results/Figure4/Brain_AND_BrainRet_Overlap_Peaks.txt")
+
+All_samples_EC <- dba.count(result_tissue, peaks = result_VENN_Endo_All, bParallel = TRUE)
+All_samples_brainUnique <- dba.count(All_samples_brainEC, peaks = result_VENN_Brain_Unique)
+All_samples_HeartUnique <- dba.count(All_samples_brainEC, peaks = result_VENN_Heart_Unique)
+All_samples_KidneyUnique <- dba.count(All_samples_brainEC, peaks = result_VENN_Kidney_Unique)
+All_samples_Lung_Unique <- dba.count(All_samples_brainEC, peaks = result_VENN_Lung_Unique)
+All_samples_Liver_Unique <- dba.count(All_samples_brainEC, peaks = result_VENN_Liver_Unique)
+All_samples_Brain_Retina_Unique <- dba.count(All_samples_brainEC, peaks = result_VENN_Brain_Retina_Unique)
+All_samples_Brain_BrainRetinaOverlap_Unique <- dba.count(All_samples_brainEC, peaks = result_VENN_Brain_AND_BrainRet_Unique)
+All_samples_Heterogeneity <- dba.count(result_tissue, peaks = result_VENN_Endo_UNIQUE, bParallel = TRUE)
+
+save(All_samples_EC, file = "DBA_ALL_EC_Peaks")
+save(All_samples_Heterogeneity, file = "DBA_ALL_Heterogeneity_Peaks.RData")
+save(All_samples_Brain_Retina_Unique, file = "DBA_Brain_Ret_Heterogeneity_object.RData")
+save(All_samples_HeartUnique, file = "DBA_Heart_Heterogeneity_object.RData")
+save(All_samples_Lung_Unique, file = "DBA_Lung_Ret_Heterogeneity_object.RData")
+save(All_samples_Liver_Unique, file = "DBA_Liver_Ret_Heterogeneity_object.RData")
+save(All_samples_KidneyUnique, file = "DBA_Kidney_Ret_Heterogeneity_object.RData")
+
+All_plot_EC_shared <- dba.plotHeatmap(All_samples_EC, correlations=FALSE, maxSites = 2646,
+                                      scale = "row", distMethod = "pearson", report = TRUE)
+
+plot1 <- annoGR2DF(All_plot_EC_shared)
+plot1
+plot1 <- unite(plot1, "range", c("chr","start"), sep = "-", remove=TRUE)
+plot1 <- unite(plot1, "range", c("range","end"), sep = "-", remove=TRUE)
+plot1 <- select(plot1, -c(2))
+plot1 <- remove_rownames(plot1)
+plot1 <- column_to_rownames(plot1, var = "range")
+head(plot1)
+plot1
+write.csv(plot1, file = "plot1.csv")
+colnames(plot1) <- c("Brain_Input","Brain_Input","Brain_Input","Brain_Input","Brain_Input","Brain_Input","Brain_Input","Brain_Endothelial","Brain_Endothelial","Brain_Endothelial","Heart_Input","Brain_Input","Brain_Input","Brain_Input","Brain_Endothelial","Brain_Endothelial","Brain_Endothelial","Brain_Endothelial","Brain_Endothelial","Brain_Endothelial","Trunk_Input","Heart_Endothelial","Heart_Endothelial","Heart_Endothelial","Heart_Endothelial","Brain_Endothelial","Brain_Endothelial","Brain_Endothelial","Trunk_Endothelial","Trunk_Endothelial","Trunk_Endothelial","Trunk_Endothelial","Liver_Input","Liver_Input","Liver_Endothelial","Liver_Endothelial","Liver_Input","Liver_Input","Liver_Input","Liver_Input","Liver_Endothelial","Liver_Endothelial","Lung_Input","Lung_Endothelial","Lung_Input","Lung_Endothelial","Lung_Input","Lung_Endothelial","Lung_Endothelial","Heart_Input","Heart_Endothelial","Heart_Endothelial","Heart_Input","Heart_Input","Heart_Endothelial","Heart_Endothelial","Kidney_Input","Kidney_Input","Kidney_Endothelial","Kidney_Endothelial","Kidney_Input","Kidney_Input","Kidney_Input","Kidney_Endothelial","Kidney_Endothelial")
+plot1 <- avearrays(plot1)
+plot1 <- plot1[,c("Brain_Endothelial", "Heart_Endothelial", "Liver_Endothelial", 
+                              "Lung_Endothelial", "Kidney_Endothelial", "Trunk_Endothelial",
+                              "Brain_Input", "Heart_Input", "Liver_Input", 
+                              "Lung_Input", "Kidney_Input", "Trunk_Input")]
+
+my_palette <- colorRampPalette(c("#990099", "#990099", "#990099","#990099","#990099","black","#FFFF00","#FFFF00","#FFFF00", "#FFFF00","#FFFF00"))(n = 1000)
+
+Shared_EC <- pheatmap(mat = plot1,color = my_palette, cluster_rows = F,
+                      show_rownames=FALSE,cluster_cols = FALSE,border_color = NA,
+                      scale = "row",cutree_rows = 4,clustering_method = 'complete') 
+
+gc()
+pres.clust <- cbind(Shared_EC, cluster = cutree(Shared_EC$tree_row, k = 6))
+pres.clust <- as.data.frame(unlist(pres.clust[,2]))
+colnames(pres.clust) <- c("cluster")
+
+current.cluster.ids <- c(1,2,3,4,5,6)
+new.cluster.ids2 <- c("c1","c2","c3","c4","c5","c6")
+pres.clust$cluster <- plyr::mapvalues(pres.clust$cluster, from = current.cluster.ids, to = new.cluster.ids2)
+
+Shared_EC <- pheatmap(plot1, cluster_rows=TRUE, show_rownames=FALSE, 
+                 show_colnames = TRUE, cluster_cols=FALSE, 
+                 main="Heatmap", scale="row", annotation_row = pres.clust, cutree_rows = 6,clustering_method = 'complete',
+                 border_color = NA, color = my_palette)
+
+z <- cutree(Shared_EC$tree_row, k = 6)
+head(as.data.frame(z))
+z <- as.data.frame(z)
+
+write.table(z, file = "./Shared_EC_Peaks.txt")
