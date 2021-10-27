@@ -138,3 +138,5 @@ head(as.data.frame(z))
 z <- as.data.frame(z)
 
 write.table(z, file = "./Shared_EC_Peaks.txt")
+
+#Peaks were then taken to HOMER to find enriched transcription factor motifs
