@@ -1,3 +1,4 @@
+#Script below was adapted from the recommended processing pipeline the library creators have shared. 
 #Import Packages
 library("DESeq2")
 library("tximport")
