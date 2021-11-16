@@ -1,3 +1,3 @@
-# Cantu_Hill_EC_Diversity
+# Cantu_Hill_EC_Diversity_2021
 
-Collection of code used to generate data in endothelial diversity manuscript.
+Collection of representative code used to generate data in manuscript.
